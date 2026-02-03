@@ -6,81 +6,113 @@
     <meta charset="utf-8">
     <style>
         body {
-            font-family: sans-serif;
-            padding: 20px;
-            background: #0f0f0f;
-            color: #e0e0e0;
-            max-width: 900px;
-            margin: auto;
-        }
-
-        h1 {
-            color: #fff;
-            font-size: 1.5rem;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #ffffff;
+            color: #333333;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
         }
 
         .container {
-            background: #1a1a1a;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 720px;
+            text-align: center;
+        }
+
+        h1 {
+            font-weight: 300;
+            font-size: 2rem;
+            margin-bottom: 2.5rem;
+            color: #111;
+            letter-spacing: -0.5px;
         }
 
         label {
             display: block;
-            margin-top: 15px;
-            font-weight: bold;
-            color: #aaa;
+            text-align: left;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        input {
-            width: 100%;
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 14px 16px;
+            font-size: 14px;
+            border: 1px solid #eaeaea;
+            border-radius: 8px;
+            background: #fafafa;
+            color: #333;
+            outline: none;
+            transition: all 0.2s ease;
             box-sizing: border-box;
-            background: #252525;
-            color: #fff;
-            border: 1px solid #333;
-            padding: 12px;
-            border-radius: 4px;
-            margin-top: 5px;
-            font-family: monospace;
+            font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", "Droid Sans Mono", "Source Code Pro", monospace;
+            margin-bottom: 0;
+        }
+
+        input[type="text"]:focus {
+            background: #fff;
+            border-color: #aaa;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03);
         }
 
         button {
-            margin-top: 20px;
-            padding: 12px 24px;
-            background: #3b82f6;
+            background: #111;
             color: #fff;
             border: none;
-            border-radius: 4px;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
-            font-weight: bold;
-            transition: background 0.2s;
+            transition: all 0.2s ease;
+            letter-spacing: 0.3px;
+            margin-top: 0;
+            white-space: nowrap;
         }
 
         button:hover {
-            background: #2563eb;
+            background: #333;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
 
-        #status {
-            margin-top: 15px;
-            font-size: 0.9rem;
-            color: #888;
+        button:active {
+            transform: translateY(0);
         }
 
         .video-js {
             width: 100%;
-            border-radius: 4px;
-            margin-top: 20px;
-            aspect-ratio: 16/9;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.08);
+            margin-top: 10px;
         }
 
         .error-log {
-            margin-top: 20px;
-            background: #2d1a1a;
-            border-left: 4px solid #ef4444;
-            padding: 10px;
-            color: #f87171;
+            margin-top: 24px;
+            padding: 16px;
+            border-radius: 8px;
+            background-color: #fff0f0;
+            color: #d32f2f;
+            border: 1px solid #ffcccc;
+            text-align: left;
+            font-family: monospace;
+            font-size: 0.85rem;
             display: none;
+            line-height: 1.5;
         }
     </style>
 </head>
@@ -90,12 +122,12 @@
         <h1>AnimePahe M3U8 Proxy</h1>
 
         <label for="url">M3U8 URL</label>
-        <input type="text" id="url"
-            value="https://vault-16.owocdn.top/stream/16/16/252f009224b5ebc12a3e0ec633e1f85aa33bdd7e0ef6ac9b6d6134a38e869eba/uwu.m3u8" />
+        <div class="input-group">
+            <input type="text" id="url" placeholder="Enter M3U8 URL here..." />
+            <button onclick="test()">Play Now</button>
+        </div>
 
-        <button onclick="test()">Play Now</button>
-        <div id="status">Ready to test.</div>
-        <video id="videoPlayer" class="video-js vjs-default-skin" controls></video>
+        <video id="videoPlayer" class="video-js vjs-default-skin vjs-big-play-centered" controls></video>
         <div id="errorLog" class="error-log"></div>
     </div>
 
@@ -109,21 +141,29 @@
 
         function test() {
             const url = document.getElementById('url').value;
-            const status = document.getElementById('status');
             const errorLog = document.getElementById('errorLog');
             const videoElement = document.getElementById('videoPlayer');
 
             if (player) {
                 player.dispose();
                 player = null;
+                const newVideoElement = document.createElement('video');
+                newVideoElement.id = 'videoPlayer';
+                newVideoElement.className = 'video-js vjs-default-skin vjs-big-play-centered';
+                newVideoElement.controls = true;
+                document.querySelector('.container').insertBefore(newVideoElement, errorLog);
             }
+
+            const currentVideoElement = document.getElementById('videoPlayer');
 
             errorLog.style.display = 'none';
             errorLog.innerText = '';
 
             const proxyUrl = `/m3u8-proxy?url=${encodeURIComponent(url)}`;
 
-            player = videojs(videoElement, {
+            player = videojs(currentVideoElement, {
+                fluid: true,
+                aspectRatio: '16:9',
                 html5: {
                     vhs: {
                         overrideNative: true,
@@ -143,8 +183,6 @@
                 preload: 'auto'
             });
 
-            status.innerText = "Loading manifest via proxy...";
-
             player.src({
                 src: proxyUrl,
                 type: 'application/x-mpegURL',
@@ -152,9 +190,8 @@
             });
 
             player.ready(function () {
-                status.innerText = "Video.js ready. Starting playback...";
                 player.play().catch(e => {
-                    status.innerText = "Autoplay blocked. Click Play button.";
+                    console.error("Autoplay blocked", e);
                 });
             });
 
@@ -163,10 +200,6 @@
                 console.error("Video.js Error:", error);
                 errorLog.style.display = 'block';
                 errorLog.innerText = `ERROR: ${error.message || error.code}. Check console for details.`;
-            });
-
-            player.on('loadedmetadata', function () {
-                status.innerText = "Video loaded successfully!";
             });
         }
     </script>
