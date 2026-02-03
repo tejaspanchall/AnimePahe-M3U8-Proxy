@@ -1,0 +1,32 @@
+{
+  "name": "AnimePahe M3U8 Proxy",
+  "version": "1.0.0",
+  "description": "lightweight m3u8 proxy created by tejaspanchall",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tejaspanchall/AnimePahe-M3U8-Proxy.git"
+  },
+  "keywords": [
+    "m3u8",
+    "proxy",
+    "CORS",
+    "proxy",
+    "m3u8"
+  ],
+  "author": "tejaspanchall",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/tejaspanchall/AnimePahe-M3U8-Proxy/issues"
+  },
+  "homepage": "https://github.com/tejaspanchall/AnimePahe-M3U8-Proxy",
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
+  }
+}
