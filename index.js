@@ -171,36 +171,43 @@ app.get("/m3u8-proxy", async (req, res) => {
             res.setHeader('Content-Type', targetResponse.headers.get("Content-Type") || "application/vnd.apple.mpegurl");
             res.status(200).send(content);
         } else {
-            let type = targetResponse.headers.get('content-type') || "";
+            // Binary content (segments, keys, etc.)
+            const type = targetResponse.headers.get('content-type') || "application/octet-stream";
             const len = targetResponse.headers.get('content-length');
 
-            // Force correct MIME types for obfuscated segments
-            const lPath = url.pathname.toLowerCase();
-            if (lPath.includes('segment') || lPath.endsWith('.jpg') || lPath.endsWith('.ts')) {
-                type = "video/mp2t";
-            } else if (isKey || lPath.endsWith('.key')) {
-                type = "application/octet-stream";
-            }
+            // Safety check: detect HTML error pages masquerading as video
+            const isLikelyErrorPage = (
+                type.includes('text/html') ||
+                (len && parseInt(len) < 2000)
+            );
 
-            console.log(`[m3u8-proxy] Stream Mode: ${targetResponse.status} [${type}] [${len} bytes]`);
-
-            // X-RAY: Read body if it's small to catch error pages (e.g. 700 bytes)
-            if (len && parseInt(len) < 3000 && parseInt(len) > 0) {
+            if (isLikelyErrorPage && len && parseInt(len) < 2000) {
+                // Peek at small responses to catch error pages
                 const clone = targetResponse.clone();
                 const text = await clone.text();
-                if (text.includes('<html') || text.includes('<!DOCTYPE') || text.length < 50) {
-                    console.log(`[m3u8-proxy] BODY REVEAL: ${text.substring(0, 1000)}`);
+                if (text.includes('<html') || text.includes('<!DOCTYPE')) {
+                    console.error(`[m3u8-proxy] ERROR PAGE DETECTED: ${text.substring(0, 500)}`);
+                    return safeSendResponse(502, { message: "Upstream returned error page", body: text.substring(0, 1000) });
                 }
             }
 
+            // Enhanced logging for debugging
+            const logInfo = {
+                status: targetResponse.status,
+                contentType: type,
+                contentLength: len || 'chunked',
+                path: url.pathname.substring(url.pathname.lastIndexOf('/') + 1)
+            };
+            console.log(`[m3u8-proxy] Binary Mode:`, JSON.stringify(logInfo));
+
+            // Forward all relevant headers from upstream
             targetResponse.headers.forEach((v, k) => {
                 const lk = k.toLowerCase();
-                if (['content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag', 'vary'].includes(lk)) {
+                if (['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'].includes(lk)) {
                     res.setHeader(k, v);
                 }
             });
 
-            res.setHeader('Content-Type', type);
             res.writeHead(targetResponse.status);
             if (targetResponse.body) {
                 targetResponse.body.pipe(res);
