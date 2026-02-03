@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 3000;
 
-// Internal Cookie Jar to maintain session across M3U8 -> KEY -> SEGMENT requests
+// Internal Cookie Jar for session persistence across requests
 const cookieJar = new Map();
 
 app.listen(PORT, () => {
@@ -39,53 +39,52 @@ app.get("/m3u8-proxy", async (req, res) => {
         const headersParam = req.query.headers ? decodeURIComponent(req.query.headers) : "";
         let directReferer = req.query.referer || req.query.referrer;
 
-        // Modern User-Agent
+        // Modern User-Agent from a working proxy example
         const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36';
 
         const headers = {
             "User-Agent": userAgent,
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Connection": "keep-alive"
         };
 
-        // Forward critical headers from client
+        // Forward critical headers from client if present
         const forwardHeaders = ['range', 'if-match', 'if-none-match', 'if-modified-since', 'if-unmodified-since', 'authorization', 'cookie'];
         forwardHeaders.forEach(h => {
             if (req.headers[h]) headers[h] = req.headers[h];
         });
 
-        // Apply headersParam
+        // Apply headers from query param (takes precedence)
         if (headersParam) {
             try {
                 const additionalHeaders = JSON.parse(headersParam);
                 Object.entries(additionalHeaders).forEach(([key, value]) => {
-                    const lowerKey = key.toLowerCase();
-                    headers[lowerKey] = value;
-                    if (lowerKey === 'referer' || lowerKey === 'referrer') {
-                        directReferer = value;
-                    }
+                    const lk = key.toLowerCase();
+                    headers[lk] = value;
+                    if (lk === 'referer' || lk === 'referrer') directReferer = value;
                 });
             } catch (e) { }
         }
 
-        // Handle Referer and Origin parity with trailing slash protection
+        // Referer & Origin Parity: many servers block localhost. Use target domain if missing.
         if (directReferer) {
             let refStr = decodeURIComponent(directReferer);
             if (refStr.includes('kwik.cx') && !refStr.endsWith('/')) {
-                refStr += '/';
+                refStr += '/'; // Kwik often requires the trailing slash
             }
             headers['referer'] = refStr;
         }
+
         if (headers['referer']) {
             try {
-                const refUrl = new URL(headers['referer']);
-                headers['origin'] = refUrl.origin;
+                headers['origin'] = new URL(headers['referer']).origin;
             } catch (e) {
                 headers['origin'] = headers['referer'];
             }
         }
 
-        // Security Fallback: Avoid localhost
+        // Final fallback: never send localhost as origin
         if (!headers['origin'] || headers['origin'].includes('localhost')) {
             headers['origin'] = url.origin;
         }
@@ -93,14 +92,10 @@ app.get("/m3u8-proxy", async (req, res) => {
             headers['referer'] = url.origin;
         }
 
-        // INJECT COOKIES FROM INTERNAL JAR
+        // INJECT STORED COOKIES (Session Persistence)
         const storedCookies = cookieJar.get(url.hostname);
         if (storedCookies) {
-            if (headers['cookie']) {
-                headers['cookie'] = `${headers['cookie']}; ${storedCookies}`;
-            } else {
-                headers['cookie'] = storedCookies;
-            }
+            headers['cookie'] = headers['cookie'] ? `${headers['cookie']}; ${storedCookies}` : storedCookies;
         }
 
         if (url.pathname.endsWith(".mp4")) {
@@ -112,7 +107,8 @@ app.get("/m3u8-proxy", async (req, res) => {
         const isPlaylist = url.pathname.toLowerCase().endsWith(".m3u8");
         const isKey = url.pathname.toLowerCase().includes('.key');
 
-        console.log(`[m3u8-proxy] Proxying: ${url.href}`);
+        console.log(`[m3u8-proxy] Fetching: ${url.href}`);
+        // console.log(`[m3u8-proxy] Headers:`, JSON.stringify(headers));
 
         const targetResponse = await nodeFetch(url.href, {
             headers,
@@ -120,19 +116,18 @@ app.get("/m3u8-proxy", async (req, res) => {
             compress: false
         });
 
-        // CAPTURE COOKIES INTO INTERNAL JAR
-        const setCookieHeaders = targetResponse.headers.raw()['set-cookie'];
-        if (setCookieHeaders) {
-            // Merge cookies for this domain
-            const currentCookies = cookieJar.get(url.hostname) || "";
-            const newCookies = setCookieHeaders.map(c => c.split(';')[0]).join('; ');
-            cookieJar.set(url.hostname, currentCookies ? `${currentCookies}; ${newCookies}` : newCookies);
-            console.log(`[m3u8-proxy] Cookie Jar Update for ${url.hostname}`);
+        // CAPTURE SET-COOKIE for future requests in this session
+        const setCookie = targetResponse.headers.raw()['set-cookie'];
+        if (setCookie) {
+            const current = cookieJar.get(url.hostname) || "";
+            const merged = [...new Set([...current.split('; '), ...setCookie.map(c => c.split(';')[0])])].filter(Boolean).join('; ');
+            cookieJar.set(url.hostname, merged);
+            console.log(`[m3u8-proxy] Session Updated: ${url.hostname}`);
         }
 
-        // CORS Setup with Credential Support
-        const requestOrigin = req.headers.origin || '*';
-        res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+        // CORS Setup: browsers require specific origin if credentials=true
+        const origin = req.headers.origin || '*';
+        res.setHeader('Access-Control-Allow-Origin', origin);
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, HEAD');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With, Range, Authorization, Cookie');
         res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
@@ -145,68 +140,68 @@ app.get("/m3u8-proxy", async (req, res) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
 
         if (isPlaylist || targetResponse.headers.get('content-type')?.includes("mpegURL")) {
-            console.log(`[m3u8-proxy] Playlist: ${targetResponse.status}`);
-            let modifiedM3u8 = await targetResponse.text();
+            console.log(`[m3u8-proxy] Playlist Mode [Status: ${targetResponse.status}]`);
+            let content = await targetResponse.text();
 
-            modifiedM3u8 = modifiedM3u8.split("\n").map((line) => {
-                const trimmedLine = line.trim();
-                // Don't proxy certain tags or empty lines
-                if (trimmedLine === '' || trimmedLine.startsWith("#EXTM3U") || trimmedLine.startsWith("#EXT-X-VERSION")) return line;
+            content = content.split("\n").map((line) => {
+                const trimmed = line.trim();
+                if (trimmed === '' || trimmed.startsWith("#EXTM3U") || trimmed.startsWith("#EXT-X-VERSION")) return line;
 
-                // Proxy tags with URIs (KEY, MAP, MEDIA, etc)
-                if (trimmedLine.startsWith("#")) {
+                if (trimmed.startsWith("#")) {
                     return line.replace(/(URI\s*=\s*")([^"]+)(")/gi, (match, prefix, p1, suffix) => {
                         try {
-                            const absoluteUrl = new URL(p1, url.href).href;
-                            let newUri = `/m3u8-proxy?url=${encodeURIComponent(absoluteUrl)}`;
-                            if (headersParam) newUri += `&headers=${encodeURIComponent(headersParam)}`;
-                            if (directReferer) newUri += `&referer=${encodeURIComponent(directReferer)}`;
-                            return `${prefix}${newUri}${suffix}`;
+                            const abs = new URL(p1, url.href).href;
+                            let p = `/m3u8-proxy?url=${encodeURIComponent(abs)}`;
+                            if (headersParam) p += `&headers=${encodeURIComponent(headersParam)}`;
+                            if (directReferer) p += `&referer=${encodeURIComponent(directReferer)}`;
+                            return `${prefix}${p}${suffix}`;
                         } catch (e) { return match; }
                     });
                 }
 
-                // Proxy actual segment or variant URLs
                 try {
-                    // Check if it's already a full URL or a relative path
-                    const absoluteUrl = new URL(trimmedLine, url.href).href;
-                    let newUrl = `/m3u8-proxy?url=${encodeURIComponent(absoluteUrl)}`;
-                    if (headersParam) newUrl += `&headers=${encodeURIComponent(headersParam)}`;
-                    if (directReferer) newUrl += `&referer=${encodeURIComponent(directReferer)}`;
-                    return newUrl;
+                    const abs = new URL(trimmed, url.href).href;
+                    let p = `/m3u8-proxy?url=${encodeURIComponent(abs)}`;
+                    if (headersParam) p += `&headers=${encodeURIComponent(headersParam)}`;
+                    if (directReferer) p += `&referer=${encodeURIComponent(directReferer)}`;
+                    return p;
                 } catch (e) { return line; }
             }).join("\n");
 
             res.setHeader('Content-Type', targetResponse.headers.get("Content-Type") || "application/vnd.apple.mpegurl");
-            res.status(200).send(modifiedM3u8);
+            res.status(200).send(content);
         } else {
-            let contentType = targetResponse.headers.get('content-type') || "";
-            const contentLength = targetResponse.headers.get('content-length');
+            let type = targetResponse.headers.get('content-type') || "";
+            const len = targetResponse.headers.get('content-length');
 
-            // Force correct MIME types for obfuscated or binary files
-            const lowerPath = url.pathname.toLowerCase();
-            if (lowerPath.includes('segment') || lowerPath.endsWith('.jpg') || lowerPath.endsWith('.ts')) {
-                contentType = "video/mp2t";
-            } else if (isKey || lowerPath.endsWith('.key')) {
-                contentType = "application/octet-stream";
+            // Force correct MIME types for obfuscated segments
+            const lPath = url.pathname.toLowerCase();
+            if (lPath.includes('segment') || lPath.endsWith('.jpg') || lPath.endsWith('.ts')) {
+                type = "video/mp2t";
+            } else if (isKey || lPath.endsWith('.key')) {
+                type = "application/octet-stream";
             }
 
-            console.log(`[m3u8-proxy] Stream: ${targetResponse.status} [${contentType}] [${contentLength} bytes]`);
+            console.log(`[m3u8-proxy] Stream Mode: ${targetResponse.status} [${type}] [${len} bytes]`);
 
-            targetResponse.headers.forEach((value, key) => {
-                const lowerKey = key.toLowerCase();
-                const preservedHeaders = [
-                    'content-length', 'content-range', 'accept-ranges',
-                    'last-modified', 'etag', 'vary'
-                ];
-                if (preservedHeaders.includes(lowerKey)) {
-                    res.setHeader(key, value);
+            // X-RAY: Read body if it's small to catch error pages (e.g. 700 bytes)
+            if (len && parseInt(len) < 3000 && parseInt(len) > 0) {
+                const clone = targetResponse.clone();
+                const text = await clone.text();
+                if (text.includes('<html') || text.includes('<!DOCTYPE') || text.length < 50) {
+                    console.log(`[m3u8-proxy] BODY REVEAL: ${text.substring(0, 1000)}`);
+                }
+            }
+
+            targetResponse.headers.forEach((v, k) => {
+                const lk = k.toLowerCase();
+                if (['content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag', 'vary'].includes(lk)) {
+                    res.setHeader(k, v);
                 }
             });
 
-            res.setHeader('Content-Type', contentType);
+            res.setHeader('Content-Type', type);
             res.writeHead(targetResponse.status);
-
             if (targetResponse.body) {
                 targetResponse.body.pipe(res);
             } else {
