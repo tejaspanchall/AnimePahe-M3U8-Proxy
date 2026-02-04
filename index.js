@@ -19,6 +19,16 @@ function createSafeSender(res) {
     };
 }
 
+function isOriginAllowed(origin) {
+    if (CONFIG.ALLOWED_ORIGINS.includes("*")) {
+        return true;
+    }
+    if (CONFIG.ALLOWED_ORIGINS.length && !CONFIG.ALLOWED_ORIGINS.includes(origin)) {
+        return false;
+    }
+    return true;
+}
+
 function buildUpstreamHeaders(req, url, headersParam) {
     const headers = {
         "User-Agent": CONFIG.DEFAULT_USER_AGENT,
@@ -101,6 +111,12 @@ function setCorsHeaders(req, res) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 
+function generateProxyUrl(targetUrl, headersParam) {
+    let proxyUrl = `/m3u8-proxy?url=${encodeURIComponent(targetUrl)}`;
+    if (headersParam) proxyUrl += `&headers=${encodeURIComponent(headersParam)}`;
+    return proxyUrl;
+}
+
 function proxyPlaylistContent(content, url, headersParam) {
     return content.split("\n").map((line) => {
         const trimmed = line.trim();
@@ -113,9 +129,7 @@ function proxyPlaylistContent(content, url, headersParam) {
             return line.replace(/(URI\s*=\s*")([^"]+)(")/gi, (match, prefix, uri, suffix) => {
                 try {
                     const abs = new URL(uri, url.href).href;
-                    let proxyUrl = `/m3u8-proxy?url=${encodeURIComponent(abs)}`;
-                    if (headersParam) proxyUrl += `&headers=${encodeURIComponent(headersParam)}`;
-                    return `${prefix}${proxyUrl}${suffix}`;
+                    return `${prefix}${generateProxyUrl(abs, headersParam)}${suffix}`;
                 } catch (e) {
                     return match;
                 }
@@ -124,9 +138,7 @@ function proxyPlaylistContent(content, url, headersParam) {
 
         try {
             const abs = new URL(trimmed, url.href).href;
-            let proxyUrl = `/m3u8-proxy?url=${encodeURIComponent(abs)}`;
-            if (headersParam) proxyUrl += `&headers=${encodeURIComponent(headersParam)}`;
-            return proxyUrl;
+            return generateProxyUrl(abs, headersParam);
         } catch (e) {
             return line;
         }
@@ -149,11 +161,21 @@ async function checkForErrorPage(targetResponse) {
 }
 
 app.get('/', (req, res) => {
+    const origin = req.headers.origin || "";
+    if (!isOriginAllowed(origin)) {
+        res.status(403).send(`The origin "${origin}" was blacklisted by the operator of this proxy.`);
+        return;
+    }
     res.sendFile(path.join(__dirname, 'html', 'playground.html'));
 });
 
 app.get("/m3u8-proxy", async (req, res) => {
     const safeSend = createSafeSender(res);
+    const origin = req.headers.origin || "";
+
+    if (!isOriginAllowed(origin)) {
+        return safeSend(403, `The origin "${origin}" was blacklisted by the operator of this proxy.`);
+    }
 
     try {
         const urlStr = req.query.url;
