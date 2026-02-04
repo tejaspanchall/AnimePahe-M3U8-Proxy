@@ -204,13 +204,15 @@ app.get("/m3u8-proxy", async (req, res) => {
         if (isPlaylist) {
             const content = await targetResponse.text();
             const proxiedContent = proxyPlaylistContent(content, url, headersParam);
-            res.setHeader('Content-Type', targetResponse.headers.get("Content-Type") || "application/vnd.apple.mpegurl");
+            res.setHeader('Content-Type', "application/vnd.apple.mpegurl");
             res.status(200).send(proxiedContent);
         } else {
             const errorCheck = await checkForErrorPage(targetResponse);
             if (errorCheck.isError) {
-                return safeSend(502, {
+                const status = targetResponse.status >= 400 ? targetResponse.status : 502;
+                return safeSend(status, {
                     message: "Upstream returned error page",
+                    upstreamStatus: targetResponse.status,
                     body: errorCheck.body.substring(0, 1000)
                 });
             }
